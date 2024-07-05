@@ -17,12 +17,24 @@ MAX_TOKENS_PER_CHUNK = (
 )
 # discrete chunks to translate one chunk at a time
 
+#default model for all kind of tasks in GPT completion
+DEFAULT_MODEL = "gpt-4-turbo"
+
+#model for splitting text into chunks
+SPLIT_MODEL = "gpt-3.5-turbo"
+
+#First translation model
+FIRST_TRANSLATION_MODEL = "gpt-4-turbo"
+#Second translation model
+SECOND_TRANSLATION_MODEL_2 = "gpt-4-turbo"
+
+
 
 def get_completion(
     prompt: str,
     system_message: str = "You are a helpful assistant.",
-    model: str = "gpt-4-turbo",
-    temperature: float = 0.3,
+    model: str = DEFAULT_MODEL,
+    temperature: float = 0.1,
     json_mode: bool = False,
 ) -> Union[str, dict]:
     """
@@ -232,7 +244,7 @@ Please take into account the expert suggestions when editing the translation. Ed
 
 Output only the new translation and nothing else."""
 
-    translation_2 = get_completion(prompt, system_message)
+    translation_2 = get_completion(prompt,system_message,model = SECOND_TRANSLATION_MODEL_2)
 
     return translation_2
 
@@ -554,7 +566,7 @@ Output only the new translation of the indicated part and nothing else."""
             reflection_chunk=reflection_chunks[i],
         )
 
-        translation_2 = get_completion(prompt, system_message=system_message)
+        translation_2 = get_completion(prompt,system_message=system_message,model = SECOND_TRANSLATION_MODEL_2)
         translation_2_chunks.append(translation_2)
 
     return translation_2_chunks
@@ -577,10 +589,17 @@ def multichunk_translation(
         List[str]: The list of improved translations for each source text chunk.
     """
 
+    #程序进度注解
+    ic("Initial multichunk_initial_translation")
+    
     translation_1_chunks = multichunk_initial_translation(
         source_lang, target_lang, source_text_chunks
     )
-
+    
+    #程序进度注解
+    ic(len(translation_1_chunks))
+    ic("multichunk_reflect starts")
+    
     reflection_chunks = multichunk_reflect_on_translation(
         source_lang,
         target_lang,
@@ -588,7 +607,9 @@ def multichunk_translation(
         translation_1_chunks,
         country,
     )
-
+    #程序进度注解
+    ic("improve_translation starts")
+    
     translation_2_chunks = multichunk_improve_translation(
         source_lang,
         target_lang,
@@ -627,7 +648,7 @@ def calculate_chunk_size(token_count: int, token_limit: int) -> int:
         >>> calculate_chunk_size(2242, 500)
         496
     """
-
+    
     if token_count <= token_limit:
         return token_count
 
@@ -673,12 +694,14 @@ def translate(
         ic(token_size)
 
         text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-            model_name="gpt-4",
+            model_name= SPLIT_MODEL,
             chunk_size=token_size,
             chunk_overlap=0,
         )
 
         source_text_chunks = text_splitter.split_text(source_text)
+        
+        ic(len(source_text_chunks))
 
         translation_2_chunks = multichunk_translation(
             source_lang, target_lang, source_text_chunks, country
