@@ -1,1 +1,1 @@
-from .utils import translate
+from .new_utils import translate

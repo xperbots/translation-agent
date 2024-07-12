@@ -29,12 +29,12 @@ To get started with `translation-agent`, follow these steps:
 - The Poetry package manager is required for installation. [Poetry Installation](https://python-poetry.org/docs/#installation) Depending on your environment, this might work:
 
 ```bash
-pip install poetry
+pip3 install poetry
 ```
 
 - A .env file with a OPENAI_API_KEY is required to run the workflow. See the .env.sample file as an example.
 ```bash
-git clone https://github.com/andrewyng/translation-agent.git
+git clone https://github.com/xperbots/translation-agent.git
 cd translation-agent
 poetry install
 poetry shell # activates virtual environment

@@ -1,7 +1,9 @@
-
 import os
 from typing import List
 from typing import Union
+import time
+import random
+import difflib
 
 import openai
 import tiktoken
@@ -13,23 +15,61 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 load_dotenv()  # read local .env file
 client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+#定义块的大小，让AI分块翻译
 MAX_TOKENS_PER_CHUNK = (
-    1000  # if text is more than this many tokens, we'll break it up into
+    1600  # if text is more than this many tokens, we'll break it up into
 )
 # discrete chunks to translate one chunk at a time
 
-#default model for all kind of tasks in GPT completion
+MAX_TOKENS_OVERALL = (
+    60000  #
+)
+# discrete number of tokens to translate at a time
+
+
+#默认的GPT模型，可以通过修改这个模型变量来，调节质量当然还有价格。
 DEFAULT_MODEL = "gpt-4-turbo"
 
 #model for splitting text into chunks
 SPLIT_MODEL = "gpt-3.5-turbo"
 
 #First translation model
-FIRST_TRANSLATION_MODEL = "gpt-4-turbo"
+#FIRST_TRANSLATION_MODEL = "gpt-4-turbo"
 #Second translation model
-SECOND_TRANSLATION_MODEL_2 = "gpt-4-turbo"
+#SECOND_TRANSLATION_MODEL_2 = "gpt-4o"
 
 
+#尝试使用gpt-3.5-turbo-instruct模型来翻译,完成第一次翻译
+def get_completion_instruct_model(prompt, model="gpt-3.5-turbo-instruct", max_tokens=2000, temperature=0):
+    
+    for i in range(3):  # 最多重试三次
+        try:
+            response = client.completions.create(
+                model=model,
+                prompt=prompt,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+            return response.choices[0].text
+        
+        except openai.RateLimitError as e:
+            ic(f"Rate limit exceeded (尝试 {i+1}/3): {str(e)}")
+            if i < 2:
+                time.sleep(5)  # 等待更长时间
+        except openai.APIError as e:
+            ic(f"OpenAI API错误 (尝试 {i+1}/3): {str(e)}")
+            if i < 2:
+                time.sleep(1)
+        except openai.BadRequestError as e:
+            ic(f"请求错误 (可能是 token 数量超限): {str(e)}")
+            # 这里您可能需要调整 prompt 或 max_tokens
+            return None
+        except Exception as e:
+            ic(f"未知错误: {str(e)}")
+            return None
+    
+    ic("所有重试均失败")
+    return None
 
 def get_completion(
     prompt: str,
@@ -57,7 +97,9 @@ def get_completion(
             If json_mode is True, returns the complete API response as a dictionary.
             If json_mode is False, returns the generated text as a string.
     """
-
+    
+    ic(model)
+    
     if json_mode:
         response = client.chat.completions.create(
             model=model,
@@ -109,6 +151,89 @@ Do not provide any explanations or text apart from the translation.
     prompt = translation_prompt.format(source_text=source_text)
 
     translation = get_completion(prompt, system_message=system_message)
+
+    return translation
+
+
+def one_chunk_initial_translation_2(source_text: str
+) -> str:
+    """
+    Translate the entire text as one chunk using an LLM.
+
+    Args:
+        source_lang (str): The source language of the text.
+        target_lang (str): The target language for translation.
+        source_text (str): The text to be translated.
+
+    Returns:
+        str: The translated text.
+    """
+    num_tokens_in_text = num_tokens_in_string(source_text)
+
+    ic(num_tokens_in_text)
+
+    if num_tokens_in_text < MAX_TOKENS_PER_CHUNK:
+        ic("Translating text as single chunk")
+
+        prompt = f"""You are a professional translation engine. Please translate the text delimited by triple backticks into Vietnamese without explanation.
+        Original content:```你好```
+        Translated content:Xin chào
+        Original content:```{source_text}```
+        Translated content:"""
+        
+        final_translation = get_completion_instruct_model(prompt)
+
+        return final_translation
+
+    else:
+        ic("Translating text as multiple chunks")
+
+        token_size = calculate_chunk_size(
+            token_count=num_tokens_in_text, token_limit=MAX_TOKENS_PER_CHUNK
+        )
+
+        #ic(token_size)
+
+        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+            model_name= SPLIT_MODEL,
+            chunk_size=token_size,
+            chunk_overlap=0,
+        )
+
+        source_text_chunks = text_splitter.split_text(source_text)
+        
+        ic(len(source_text_chunks))
+
+        translation_chunks = []
+        for i in range(len(source_text_chunks)):
+            # Will translate chunk i
+            
+            prompt = f"""You are a professional translation engine. Please translate the text delimited by triple backticks into Vietnamese without explanation.
+            Original content:```你好```
+            Translated content:Xin chào
+            Original content:```{source_text_chunks[i]}```
+            Translated content:"""    
+
+            #ic(prompt)
+            translation = get_completion_instruct_model(prompt)
+            #ic(translation)
+            translation_chunks.append(translation)
+        
+        return "".join(translation_chunks)
+    
+    
+    
+    
+    prompt = f"""You are a professional translation engine. Please translate the text delimited by triple backticks into Vietnamese without explanation.
+    Original content:```你好```
+    Translated content:Xin chào
+    Original content:```{source_text}```
+    Translated content:"""
+    
+    ic("one_chunk_initial_translation_2")
+    ic(source_text)    
+    
+    translation = get_completion_instruct_model(prompt)
 
     return translation
 
@@ -245,7 +370,7 @@ Please take into account the expert suggestions when editing the translation. Ed
 
 Output only the new translation and nothing else."""
 
-    translation_2 = get_completion(prompt,system_message,model = SECOND_TRANSLATION_MODEL_2)
+    translation_2 = get_completion(prompt,system_message)
 
     return translation_2
 
@@ -268,20 +393,49 @@ def one_chunk_translate_text(
     Returns:
         str: The improved translation of the source text.
     """
+    
+    '''
     translation_1 = one_chunk_initial_translation(
         source_lang, target_lang, source_text
     )
-        
+    '''
+    
+    #ic(source_text)
+    #ic(len(source_text))
+    
+    ic("第一遍翻译")
+    translation_1 = one_chunk_initial_translation_2(source_text)
+    
+    ic(len(translation_1))
+    #ic(translation_1)
+    
+    # 将初始翻译结果写入文件
+    with open('translation_1.txt', 'w', encoding='utf-8') as file:
+        file.write(translation_1)
+    
+    ic("AI校对翻译")
     reflection = one_chunk_reflect_on_translation(
         source_lang, target_lang, source_text, translation_1, country
     )
+    # 将反思内容写入文件
+    with open('reflection.txt', 'w', encoding='utf-8') as file:
+        file.write(reflection)
     
-
+    #ic(reflection)
+    ic("根据校对第二遍翻译")
     translation_2 = one_chunk_improve_translation(
         source_lang, target_lang, source_text, translation_1, reflection
     )
+    
+    ic("########################")
+    ic(len(translation_2))
+    #ic(translation_2)
+    
+    # 将改进后的翻译结果写入文件
+    with open('translation_2.txt', 'w', encoding='utf-8') as file:
+        file.write(translation_2)
 
-
+    
     return translation_2
 
 
@@ -368,6 +522,45 @@ Output only the translation of the portion you are asked to translate, and nothi
 
     return translation_chunks
 
+
+def multichunk_initial_translation_instrcut(
+    source_lang: str, target_lang: str, source_text_chunks: List[str]
+) -> List[str]:
+    """
+    Translate a text in multiple chunks from the source language to the target language.
+
+    Args:
+        source_lang (str): The source language of the text.
+        target_lang (str): The target language for translation.
+        source_text_chunks (List[str]): A list of text chunks to be translated.
+
+    Returns:
+        List[str]: A list of translated text chunks.
+    """
+
+    
+    ic("multiple_chunk_initial_translation_2")
+    ic(len(source_text_chunks))
+
+    translation_chunks = []
+    for i in range(len(source_text_chunks)):
+        # Will translate chunk i
+        #ic(source_text_chunks[i])
+        
+        prompt = f"""You are a professional translation engine. Please translate the text delimited by triple backticks into Vietnamese without explanation.
+        Original content:```你好```
+        Translated content:Xin chào
+        Original content:```{source_text_chunks[i]}```
+        Translated content:"""    
+
+        #ic(prompt)
+        translation = get_completion_instruct_model(prompt)
+        
+        #ic(translation)
+        
+        translation_chunks.append(translation)
+
+    return translation_chunks
 
 def multichunk_reflect_on_translation(
     source_lang: str,
@@ -570,7 +763,7 @@ Output only the new translation of the indicated part and nothing else."""
             reflection_chunk=reflection_chunks[i],
         )
 
-        translation_2 = get_completion(prompt,system_message=system_message,model = SECOND_TRANSLATION_MODEL_2)
+        translation_2 = get_completion(prompt,system_message=system_message)
         translation_2_chunks.append(translation_2)
 
     return translation_2_chunks
@@ -593,16 +786,29 @@ def multichunk_translation(
         List[str]: The list of improved translations for each source text chunk.
     """
 
+    # 采用gpt3.5-instruct完成第一遍翻译
+    ic("开始第一次翻译")
+    translation_1_chunks = multichunk_initial_translation_instrcut(
+        source_lang, target_lang, source_text_chunks
+    )    
+
+    ic(len(translation_1_chunks))
+    
+    # 将初始翻译结果写入文件
+    with open('translation_1.txt', 'w', encoding='utf-8') as file:
+        file.write("".join(translation_1_chunks))
+    
+    '''
     #程序进度注解
     ic("Initial multichunk_initial_translation")
     
     translation_1_chunks = multichunk_initial_translation(
         source_lang, target_lang, source_text_chunks
     )
+    '''
     
     #程序进度注解
-    ic(len(translation_1_chunks))
-    ic("multichunk_reflect starts")
+    ic("分块评估翻译结果")
     
     reflection_chunks = multichunk_reflect_on_translation(
         source_lang,
@@ -611,9 +817,13 @@ def multichunk_translation(
         translation_1_chunks,
         country,
     )
-    #程序进度注解
-    ic("improve_translation starts")
     
+    # 将初始翻译结果写入文件
+    with open('reflection.txt', 'w', encoding='utf-8') as file:
+        file.write("".join(reflection_chunks))
+    
+    #程序进度注解
+    ic("根据反馈，二次翻译")
     translation_2_chunks = multichunk_improve_translation(
         source_lang,
         target_lang,
@@ -622,8 +832,12 @@ def multichunk_translation(
         reflection_chunks,
     )
 
+    # 将二次翻译结果写入文件
+    ic(len(translation_2_chunks))
+    with open('translation_2.txt', 'w', encoding='utf-8') as file:
+        file.write("".join(translation_2_chunks))
+    
     return translation_2_chunks
-
 
 def calculate_chunk_size(token_count: int, token_limit: int) -> int:
     """
@@ -712,3 +926,4 @@ def translate(
         )
 
         return "".join(translation_2_chunks)
+
