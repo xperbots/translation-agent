@@ -33,7 +33,10 @@ MAX_TOKENS_OVERALL = (
 
 
 #default model for all kind of tasks in GPT completion
-DEFAULT_MODEL = "gpt-4-turbo"
+GPT_DEFAULT_MODEL = "gpt-4-turbo"
+
+CLAUDE_DEFAULT_MODEL="claude-3-5-sonnet-20240620"
+#CLAUDE_DEFAULT_MODEL= "claude-3-opus-20240229"
 
 #model for splitting text into chunks
 SPLIT_MODEL = "gpt-3.5-turbo"
@@ -42,6 +45,28 @@ SPLIT_MODEL = "gpt-3.5-turbo"
 FIRST_TRANSLATION_MODEL = "gpt-4-turbo"
 #Second translation model
 SECOND_TRANSLATION_MODEL_2 = "gpt-4-turbo"
+
+
+
+def claude_completion(user_prompt,system_prompt,model=CLAUDE_DEFAULT_MODEL, max_tokens=4096):
+    
+    user_message = {"role": "user", "content": user_prompt}
+
+    # 发送消息给 Claude，并获取响应
+    try:
+        response = claudclient.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            messages=[user_message],
+            system=system_prompt  # 将系统信息作为顶级参数传递
+        )
+        
+        claude_response =response.content[0].text
+        #ic(claude_response)
+    except Exception as e:
+        print(f"Error: {str(e)}")  # 错误处理
+    
+    return claude_response
 
 
 #尝试使用gpt-3.5-turbo-instruct模型来翻译
@@ -79,7 +104,7 @@ def get_completion_instruct_model(prompt, model="gpt-3.5-turbo-instruct", max_to
 def get_completion(
     prompt: str,
     system_message: str = "You are a helpful assistant.",
-    model: str = DEFAULT_MODEL,
+    model: str = GPT_DEFAULT_MODEL,
     temperature: float = 0.0,
     json_mode: bool = False,
 ) -> Union[str, dict]:
@@ -128,7 +153,7 @@ def get_completion(
         return response.choices[0].message.content
 
 
-def one_chunk_initial_gpt4_translation(
+def one_chunk_initial_translation(
     source_lang: str, target_lang: str, source_text: str
 ) -> str:
     """
@@ -153,7 +178,9 @@ Do not provide any explanations or text apart from the translation.
 
     prompt = translation_prompt.format(source_text=source_text)
 
-    translation = get_completion(prompt, system_message=system_message)
+    # translation = get_completion(prompt, system_message=system_message)
+    
+    translation =claude_completion (prompt,system_message)
 
     return translation
 
@@ -224,21 +251,6 @@ def one_chunk_initial_gpt_instruct_translation(source_text: str
         
         return "".join(translation_chunks)
     
-    
-    
-    
-    prompt = f"""You are a professional translation engine. Please translate the text delimited by triple backticks into Vietnamese without explanation.
-    Original content:```你好```
-    Translated content:Xin chào
-    Original content:```{source_text}```
-    Translated content:"""
-    
-    ic("one_chunk_initial_translation_2")
-    ic(source_text)    
-    
-    translation = get_completion_instruct_model(prompt)
-
-    return translation
 
 
 def one_chunk_reflect_on_translation(
@@ -312,29 +324,18 @@ Write a list of specific, helpful and constructive suggestions for improving the
 Each suggestion should address one specific part of the translation.
 Output only the suggestions and nothing else."""
 
-    prompt = reflection_prompt.format(
+    user_prompt = reflection_prompt.format(
         source_lang=source_lang,
         target_lang=target_lang,
         source_text=source_text,
         translation_1=translation_1,
     )
 
-    # 用户消息
-    user_message = {"role": "user", "content": prompt}
-
+    
     # 发送消息给 Claude，并获取响应
-    try:
-        response = claudclient.messages.create(
-            model="claude-3-opus-20240229",
-            max_tokens=4096,
-            messages=[user_message],
-            system=system_message  # 将系统信息作为顶级参数传递
-        )
-        
-        reflection=response.content
-        ic(reflection) # 打印 Claude 的响应
-    except Exception as e:
-        print(f"Error: {str(e)}")  # 错误处理
+    
+    reflection=claude_completion(user_prompt,system_message)
+    
     
     return reflection
 
@@ -390,8 +391,10 @@ Please take into account the expert suggestions when editing the translation. Ed
 
 Output only the new translation and nothing else."""
 
-    translation_2 = get_completion(prompt,system_message,model = SECOND_TRANSLATION_MODEL_2)
-
+    #translation_2 = get_completion(prompt,system_message,model = SECOND_TRANSLATION_MODEL_2)
+    
+    translation_2=claude_completion(prompt,system_message)
+    
     return translation_2
 
 
@@ -415,18 +418,20 @@ def one_chunk_translate_text(
     """
     
     '''
-    translation_1 = one_chunk_initial_translation(
-        source_lang, target_lang, source_text
-    )
+
+    translation_1 = one_chunk_initial_translation(source_text)
     '''
     
     #ic(source_text)
     #ic(len(source_text))
     
     ic("第一遍翻译")
-    translation_1 = one_chunk_initial_translation_2(source_text)
     
-    ic(len(translation_1))
+    translation_1 = one_chunk_initial_translation(
+        source_lang, target_lang, source_text
+    )
+    #ic(translation_1)
+    #ic(len(translation_1))
     #ic(translation_1)
     
     # 将初始翻译结果写入文件
@@ -565,9 +570,11 @@ def translate(
         
         ic(len(source_text_chunks))
 
-        translation_2_chunks = multichunk_translation(
-            source_lang, target_lang, source_text_chunks, country
-        )
+        translation_2_chunks ="multichunk_translation"
+        
+        #translation_2_chunks = multichunk_translation(
+        #    source_lang, target_lang, source_text_chunks, country
+        #)
 
         return "".join(translation_2_chunks)
 
@@ -585,6 +592,7 @@ if __name__ == "__main__":
     with open(full_path, encoding="utf-8") as file:
         source_text = file.read()
 
+    '''
     #读取翻译结果
     relative_path = "sample-texts/translationresult.txt"
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -592,6 +600,10 @@ if __name__ == "__main__":
 
     with open(full_path, encoding="utf-8") as file:
         translation_1 = file.read()
+    '''
+        
+    translation_result = one_chunk_translate_text(source_lang,target_lang,source_text,country)
     
-    reflection = one_chunk_reflect_on_translation(source_lang,target_lang,source_text,translation_1,country)
-    ic(reflection)
+    #reflection = one_chunk_reflect_on_translation(source_lang,target_lang,source_text,translation_1,country)
+    
+    ic(translation_result)

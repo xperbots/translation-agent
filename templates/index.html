@@ -27,7 +27,7 @@
             margin: 10px;
             display: flex;
             flex-direction: column;
-            height: calc(100vh - 40px); /* Adjust height to fill viewport */
+            height: calc(100vh - 40px);
         }
         textarea, select, button {
             width: 100%;
@@ -36,7 +36,7 @@
             box-sizing: border-box;
         }
         textarea {
-            height: 40%; /* Adjust textarea height */
+            height: 40%;
         }
         button {
             background-color: #4CAF50;
@@ -44,7 +44,7 @@
             border: none;
             cursor: pointer;
             font-size: 1em;
-            padding: 15px; /* Larger padding for buttons */
+            padding: 15px;
         }
         button:hover {
             background-color: #45a049;
@@ -60,20 +60,26 @@
         <div class="box">
             <h3>翻译原文</h3>
             <textarea id="originalText"></textarea>
+            <h3>选择模型</h3>
+            <select id="modelSelect">
+                <option value="claude-3-5">Claude</option>
+                <option value="gpt-3-instruct">GPT3</option>
+                <option value="gpt-4-turbo">GPT4</option>
+            </select>
             <button onclick="translateText()">一键翻译</button>
         </div>
         <div class="box">
             <h3>翻译结果目标语言</h3>
             <select id="targetLanguage">
-                <option value="vi">Vietnamese</option>
-                <option value="th">Thai</option>
-                <option value="en">English</option>
+                <option value="Vietnamese">Vietnamese</option>
+                <option value="Thai">Thai</option>
+                <option value="English">English</option>
             </select>
             <h3>翻译结果目标国家</h3>
             <select id="targetCountry">
-                <option value="vn">Vietnam</option>
-                <option value="th">Thailand</option>
-                <option value="us">United States</option>
+                <option value="Vietnam">Vietnam</option>
+                <option value="Thailand">Thailand</option>
+                <option value="United States">United States</option>
             </select>
             <h3>翻译结果</h3>
             <textarea id="translatedText"></textarea>
@@ -86,6 +92,7 @@
             const originalText = document.getElementById('originalText').value;
             const targetLanguage = document.getElementById('targetLanguage').value;
             const targetCountry = document.getElementById('targetCountry').value;
+            const selectedModel = document.getElementById('modelSelect').value;
 
             const response = await fetch('/translate', {
                 method: 'POST',
@@ -95,7 +102,8 @@
                 body: JSON.stringify({
                     original_text: originalText,
                     target_language: targetLanguage,
-                    target_country: targetCountry
+                    target_country: targetCountry,
+                    model: selectedModel
                 })
             });
 

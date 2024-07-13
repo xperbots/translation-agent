@@ -4,6 +4,7 @@ from typing import Union
 import time
 import random
 import difflib
+import anthropic
 
 import openai
 import tiktoken
@@ -13,11 +14,19 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 load_dotenv()  # read local .env file
-client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+#client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+gptclient = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+claudclient = anthropic.Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
 
 #定义块的大小，让AI分块翻译
-MAX_TOKENS_PER_CHUNK = (
+GPT3_MAX_TOKENS_PER_CHUNK = (
     1600  # if text is more than this many tokens, we'll break it up into
+)
+GPT4_MAX_TOKENS_PER_CHUNK = (
+    4000  # if text is more than this many tokens, we'll break it up into
+)
+CLAUDE_MAX_TOKENS_PER_CHUNK = (
+    4000  # if text is more than this many tokens, we'll break it up into
 )
 # discrete chunks to translate one chunk at a time
 
@@ -27,8 +36,11 @@ MAX_TOKENS_OVERALL = (
 # discrete number of tokens to translate at a time
 
 
-#默认的GPT模型，可以通过修改这个模型变量来，调节质量当然还有价格。
-DEFAULT_MODEL = "gpt-4-turbo"
+#default model for all kind of tasks in GPT completion
+GPT_DEFAULT_MODEL = "gpt-4-turbo"
+
+CLAUDE_DEFAULT_MODEL="claude-3-5-sonnet-20240620"
+#CLAUDE_DEFAULT_MODEL= "claude-3-opus-20240229"
 
 #model for splitting text into chunks
 SPLIT_MODEL = "gpt-3.5-turbo"
@@ -39,12 +51,36 @@ SPLIT_MODEL = "gpt-3.5-turbo"
 #SECOND_TRANSLATION_MODEL_2 = "gpt-4o"
 
 
+def claude_completion(user_prompt,system_prompt,model=CLAUDE_DEFAULT_MODEL, max_tokens=4096):
+    
+    ic(model)
+    
+    user_message = {"role": "user", "content": user_prompt}
+
+    # 发送消息给 Claude，并获取响应
+    try:
+        response = claudclient.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            messages=[user_message],
+            system=system_prompt  # 将系统信息作为顶级参数传递
+        )
+        
+        claude_response =response.content[0].text
+        #ic(claude_response)
+    except Exception as e:
+        print(f"Error: {str(e)}")  # 错误处理
+    
+    return claude_response
+
+
+
 #尝试使用gpt-3.5-turbo-instruct模型来翻译,完成第一次翻译
-def get_completion_instruct_model(prompt, model="gpt-3.5-turbo-instruct", max_tokens=2000, temperature=0):
+def gpt_get_completion_instruct_model(prompt, model="gpt-3.5-turbo-instruct", max_tokens=2000, temperature=0):
     
     for i in range(3):  # 最多重试三次
         try:
-            response = client.completions.create(
+            response = gptclient.completions.create(
                 model=model,
                 prompt=prompt,
                 max_tokens=max_tokens,
@@ -71,10 +107,10 @@ def get_completion_instruct_model(prompt, model="gpt-3.5-turbo-instruct", max_to
     ic("所有重试均失败")
     return None
 
-def get_completion(
+def gpt_get_completion(
     prompt: str,
     system_message: str = "You are a helpful assistant.",
-    model: str = DEFAULT_MODEL,
+    model: str = GPT_DEFAULT_MODEL,
     temperature: float = 0.1,
     json_mode: bool = False,
 ) -> Union[str, dict]:
@@ -101,7 +137,7 @@ def get_completion(
     ic(model)
     
     if json_mode:
-        response = client.chat.completions.create(
+        response = gptclient.chat.completions.create(
             model=model,
             temperature=temperature,
             top_p=1,
@@ -113,7 +149,7 @@ def get_completion(
         )
         return response.choices[0].message.content
     else:
-        response = client.chat.completions.create(
+        response = gptclient.chat.completions.create(
             model=model,
             temperature=temperature,
             top_p=1,
@@ -126,7 +162,7 @@ def get_completion(
 
 
 def one_chunk_initial_translation(
-    source_lang: str, target_lang: str, source_text: str
+    source_lang: str, target_lang: str, source_text: str,llm_model: str
 ) -> str:
     """
     Translate the entire text as one chunk using an LLM.
@@ -149,92 +185,31 @@ Do not provide any explanations or text apart from the translation.
 {target_lang}:"""
 
     prompt = translation_prompt.format(source_text=source_text)
-
-    translation = get_completion(prompt, system_message=system_message)
-
-    return translation
-
-
-def one_chunk_initial_translation_2(source_text: str
-) -> str:
-    """
-    Translate the entire text as one chunk using an LLM.
-
-    Args:
-        source_lang (str): The source language of the text.
-        target_lang (str): The target language for translation.
-        source_text (str): The text to be translated.
-
-    Returns:
-        str: The translated text.
-    """
-    num_tokens_in_text = num_tokens_in_string(source_text)
-
-    ic(num_tokens_in_text)
-
-    if num_tokens_in_text < MAX_TOKENS_PER_CHUNK:
-        ic("Translating text as single chunk")
-
-        prompt = f"""You are a professional translation engine. Please translate the text delimited by triple backticks into Vietnamese without explanation.
+    
+    ic(llm_model)
+    
+    #gpt-3-instruct的Prompt内容不同，只有一个Prompt
+    if llm_model == "gpt-3-instruct":
+        
+        prompt = f"""You are a professional translation engine. Please translate the text delimited by triple backticks into {target_lang} without explanation.
         Original content:```你好```
         Translated content:Xin chào
         Original content:```{source_text}```
         Translated content:"""
-        
-        final_translation = get_completion_instruct_model(prompt)
+    
 
-        return final_translation
-
+    #根据llm的类型决定,第一次翻译采用什么模型
+    
+    if llm_model == "claude-3-5":
+        translation = claude_completion(prompt, system_message)
+    elif llm_model == "gpt-3-instruct":
+        translation = gpt_get_completion_instruct_model(prompt) 
+    elif llm_model == "gpt-4-turbo":
+        translation = gpt_get_completion(prompt, system_message) 
     else:
-        ic("Translating text as multiple chunks")
-
-        token_size = calculate_chunk_size(
-            token_count=num_tokens_in_text, token_limit=MAX_TOKENS_PER_CHUNK
-        )
-
-        #ic(token_size)
-
-        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-            model_name= SPLIT_MODEL,
-            chunk_size=token_size,
-            chunk_overlap=0,
-        )
-
-        source_text_chunks = text_splitter.split_text(source_text)
-        
-        ic(len(source_text_chunks))
-
-        translation_chunks = []
-        for i in range(len(source_text_chunks)):
-            # Will translate chunk i
-            
-            prompt = f"""You are a professional translation engine. Please translate the text delimited by triple backticks into Vietnamese without explanation.
-            Original content:```你好```
-            Translated content:Xin chào
-            Original content:```{source_text_chunks[i]}```
-            Translated content:"""    
-
-            #ic(prompt)
-            translation = get_completion_instruct_model(prompt)
-            #ic(translation)
-            translation_chunks.append(translation)
-        
-        return "".join(translation_chunks)
+        translation = gpt_get_completion(prompt, system_message)
     
-    
-    
-    
-    prompt = f"""You are a professional translation engine. Please translate the text delimited by triple backticks into Vietnamese without explanation.
-    Original content:```你好```
-    Translated content:Xin chào
-    Original content:```{source_text}```
-    Translated content:"""
-    
-    ic("one_chunk_initial_translation_2")
-    ic(source_text)    
-    
-    translation = get_completion_instruct_model(prompt)
-
+      
     return translation
 
 
@@ -243,7 +218,8 @@ def one_chunk_reflect_on_translation(
     target_lang: str,
     source_text: str,
     translation_1: str,
-    country: str = "",
+    llm_model: str,
+    country: str = ""
 ) -> str:
     """
     Use an LLM to reflect on the translation, treating the entire text as one chunk.
@@ -315,7 +291,15 @@ Output only the suggestions and nothing else."""
         source_text=source_text,
         translation_1=translation_1,
     )
-    reflection = get_completion(prompt, system_message=system_message)
+    
+    #根据llm的类型决定,第一次翻译采用什么模型
+    if llm_model == "claude-3-5":
+        reflection = claude_completion(prompt, system_message)
+    elif llm_model == "gpt-3-instruct" or llm_model == "gpt-4-turbo":
+        reflection = gpt_get_completion(prompt, system_message) 
+    else:
+        reflection = gpt_get_completion(prompt, system_message)
+    
     return reflection
 
 
@@ -325,6 +309,7 @@ def one_chunk_improve_translation(
     source_text: str,
     translation_1: str,
     reflection: str,
+    llm_model: str
 ) -> str:
     """
     Use the reflection to improve the translation, treating the entire text as one chunk.
@@ -370,14 +355,21 @@ Please take into account the expert suggestions when editing the translation. Ed
 
 Output only the new translation and nothing else."""
 
-    translation_2 = get_completion(prompt,system_message)
-
+    
+    #根据llm的类型决定,第一次翻译采用什么模型
+    if llm_model == "claude-3-5":
+        translation_2 = claude_completion(prompt, system_message)
+    elif llm_model == "gpt-3-instruct" or llm_model == "gpt-4-turbo":
+        translation_2 = gpt_get_completion(prompt, system_message) 
+    else:
+        translation_2 = gpt_get_completion(prompt, system_message)
+    
     return translation_2
 
 
 def one_chunk_translate_text(
-    source_lang: str, target_lang: str, source_text: str, country: str = ""
-) -> str:
+    source_lang: str, target_lang: str, source_text: str, llm_model: str, country: str = "" 
+    ) -> str:
     """
     Translate a single chunk of text from the source language to the target language.
 
@@ -394,48 +386,30 @@ def one_chunk_translate_text(
         str: The improved translation of the source text.
     """
     
-    '''
-    translation_1 = one_chunk_initial_translation(
-        source_lang, target_lang, source_text
-    )
-    '''
-    
-    #ic(source_text)
-    #ic(len(source_text))
-    
     ic("第一遍翻译")
-    translation_1 = one_chunk_initial_translation_2(source_text)
     
-    ic(len(translation_1))
+    translation_1 = one_chunk_initial_translation(
+        source_lang, target_lang, source_text,llm_model
+    )
+    
+    #ic(len(translation_1))
     #ic(translation_1)
     
     # 将初始翻译结果写入文件
-    with open('translation_1.txt', 'w', encoding='utf-8') as file:
-        file.write(translation_1)
+    #with open('translation_1.txt', 'w', encoding='utf-8') as file:
+    #    file.write(translation_1)
     
     ic("AI校对翻译")
     reflection = one_chunk_reflect_on_translation(
-        source_lang, target_lang, source_text, translation_1, country
+        source_lang, target_lang, source_text, translation_1,llm_model,country
     )
-    # 将反思内容写入文件
-    with open('reflection.txt', 'w', encoding='utf-8') as file:
-        file.write(reflection)
-    
-    #ic(reflection)
+
     ic("根据校对第二遍翻译")
     translation_2 = one_chunk_improve_translation(
-        source_lang, target_lang, source_text, translation_1, reflection
+        source_lang, target_lang, source_text, translation_1, reflection,llm_model
     )
     
-    ic("########################")
-    ic(len(translation_2))
-    #ic(translation_2)
-    
-    # 将改进后的翻译结果写入文件
-    with open('translation_2.txt', 'w', encoding='utf-8') as file:
-        file.write(translation_2)
 
-    
     return translation_2
 
 
@@ -465,7 +439,7 @@ def num_tokens_in_string(
 
 
 def multichunk_initial_translation(
-    source_lang: str, target_lang: str, source_text_chunks: List[str]
+    source_lang: str, target_lang: str, source_text_chunks: List[str],llm_model: str
 ) -> List[str]:
     """
     Translate a text in multiple chunks from the source language to the target language.
@@ -516,58 +490,39 @@ Output only the translation of the portion you are asked to translate, and nothi
             tagged_text=tagged_text,
             chunk_to_translate=source_text_chunks[i],
         )
-
-        translation = get_completion(prompt, system_message=system_message)
-        translation_chunks.append(translation)
-
-    return translation_chunks
-
-
-def multichunk_initial_translation_instrcut(
-    source_lang: str, target_lang: str, source_text_chunks: List[str]
-) -> List[str]:
-    """
-    Translate a text in multiple chunks from the source language to the target language.
-
-    Args:
-        source_lang (str): The source language of the text.
-        target_lang (str): The target language for translation.
-        source_text_chunks (List[str]): A list of text chunks to be translated.
-
-    Returns:
-        List[str]: A list of translated text chunks.
-    """
-
-    
-    ic("multiple_chunk_initial_translation_2")
-    ic(len(source_text_chunks))
-
-    translation_chunks = []
-    for i in range(len(source_text_chunks)):
-        # Will translate chunk i
-        #ic(source_text_chunks[i])
         
-        prompt = f"""You are a professional translation engine. Please translate the text delimited by triple backticks into Vietnamese without explanation.
-        Original content:```你好```
-        Translated content:Xin chào
-        Original content:```{source_text_chunks[i]}```
-        Translated content:"""    
-
-        #ic(prompt)
-        translation = get_completion_instruct_model(prompt)
+        #gpt-3-instruct的Prompt内容不同，只有一个Prompt
+        if llm_model == "gpt-3-instruct":
+            
+            prompt = f"""You are a professional translation engine. Please translate the text delimited by triple backticks into {target_lang} without explanation.
+            Original content:```你好```
+            Translated content:Xin chào
+            Original content:```{source_text_chunks[i]}```
+            Translated content:"""
         
-        #ic(translation)
+        if llm_model == "claude-3-5":
+            translation = claude_completion(prompt, system_message)
+        elif llm_model == "gpt-3-instruct":
+            translation = gpt_get_completion_instruct_model(prompt) 
+        elif llm_model == "gpt-4-turbo":
+            translation = gpt_get_completion(prompt, system_message) 
+        else:
+            translation = gpt_get_completion(prompt, system_message)
+
+        #translation = get_completion(prompt, system_message=system_message)
         
         translation_chunks.append(translation)
 
     return translation_chunks
+
 
 def multichunk_reflect_on_translation(
     source_lang: str,
     target_lang: str,
     source_text_chunks: List[str],
     translation_1_chunks: List[str],
-    country: str = "",
+    llm_model: str,
+    country: str = ""
 ) -> List[str]:
     """
     Provides constructive criticism and suggestions for improving a partial translation.
@@ -677,7 +632,16 @@ Output only the suggestions and nothing else."""
                 translation_1_chunk=translation_1_chunks[i],
             )
 
-        reflection = get_completion(prompt, system_message=system_message)
+        #根据llm的类型决定,第一次翻译采用什么模型
+        if llm_model == "claude-3-5":
+            reflection = claude_completion(prompt, system_message)
+        elif llm_model == "gpt-3-instruct" or llm_model == "gpt-4-turbo":
+            reflection = gpt_get_completion(prompt, system_message) 
+        else:
+            reflection = gpt_get_completion(prompt, system_message)
+        
+        #reflection = get_completion(prompt, system_message=system_message)
+        
         reflection_chunks.append(reflection)
 
     return reflection_chunks
@@ -689,6 +653,7 @@ def multichunk_improve_translation(
     source_text_chunks: List[str],
     translation_1_chunks: List[str],
     reflection_chunks: List[str],
+    llm_model: str
 ) -> List[str]:
     """
     Improves the translation of a text from source language to target language by considering expert suggestions.
@@ -763,14 +728,24 @@ Output only the new translation of the indicated part and nothing else."""
             reflection_chunk=reflection_chunks[i],
         )
 
-        translation_2 = get_completion(prompt,system_message=system_message)
+        #根据llm的类型决定,第一次翻译采用什么模型
+        if llm_model == "claude-3-5":
+            translation_2 = claude_completion(prompt, system_message)
+        elif llm_model == "gpt-3-instruct" or llm_model == "gpt-4-turbo":
+            translation_2 = gpt_get_completion(prompt, system_message) 
+        else:
+            translation_2 = gpt_get_completion(prompt, system_message)
+        
+        
+        #translation_2 = get_completion(prompt,system_message=system_message)
+        
         translation_2_chunks.append(translation_2)
 
     return translation_2_chunks
 
 
 def multichunk_translation(
-    source_lang, target_lang, source_text_chunks, country: str = ""
+    source_lang, target_lang, source_text_chunks, llm_model: str, country: str = ""
 ):
     """
     Improves the translation of multiple text chunks based on the initial translation and reflection.
@@ -786,26 +761,19 @@ def multichunk_translation(
         List[str]: The list of improved translations for each source text chunk.
     """
 
-    # 采用gpt3.5-instruct完成第一遍翻译
+    # 第一遍翻译
     ic("开始第一次翻译")
-    translation_1_chunks = multichunk_initial_translation_instrcut(
-        source_lang, target_lang, source_text_chunks
-    )    
-
-    ic(len(translation_1_chunks))
-    
-    # 将初始翻译结果写入文件
-    with open('translation_1.txt', 'w', encoding='utf-8') as file:
-        file.write("".join(translation_1_chunks))
-    
-    '''
-    #程序进度注解
-    ic("Initial multichunk_initial_translation")
     
     translation_1_chunks = multichunk_initial_translation(
-        source_lang, target_lang, source_text_chunks
+        source_lang, target_lang, source_text_chunks,llm_model
     )
-    '''
+    
+    #ic(len(translation_1_chunks))
+    
+    # 将初始翻译结果写入文件
+    #with open('translation_1.txt', 'w', encoding='utf-8') as file:
+    #    file.write("".join(translation_1_chunks))
+    
     
     #程序进度注解
     ic("分块评估翻译结果")
@@ -815,12 +783,9 @@ def multichunk_translation(
         target_lang,
         source_text_chunks,
         translation_1_chunks,
-        country,
+        llm_model,
+        country
     )
-    
-    # 将初始翻译结果写入文件
-    with open('reflection.txt', 'w', encoding='utf-8') as file:
-        file.write("".join(reflection_chunks))
     
     #程序进度注解
     ic("根据反馈，二次翻译")
@@ -830,12 +795,11 @@ def multichunk_translation(
         source_text_chunks,
         translation_1_chunks,
         reflection_chunks,
+        llm_model
     )
 
     # 将二次翻译结果写入文件
-    ic(len(translation_2_chunks))
-    with open('translation_2.txt', 'w', encoding='utf-8') as file:
-        file.write("".join(translation_2_chunks))
+    #ic(len(translation_2_chunks))
     
     return translation_2_chunks
 
@@ -879,14 +843,28 @@ def calculate_chunk_size(token_count: int, token_limit: int) -> int:
 
     return chunk_size
 
-
 def translate(
     source_lang,
     target_lang,
     source_text,
     country,
-    max_tokens=MAX_TOKENS_PER_CHUNK,
+    llm_model
 ):
+    
+    ic(llm_model)
+    
+    #根据llm的类型决定,分块的翻译的块大小,因为每个LLM可以单次输入大小不同，Instruct输入和输出一共4096
+    
+    if llm_model == "claude-3-5":
+        max_tokens = CLAUDE_MAX_TOKENS_PER_CHUNK
+    elif llm_model == "gpt-3-instruct":
+        max_tokens = GPT3_MAX_TOKENS_PER_CHUNK  
+    elif llm_model == "gpt-4-turbo":
+        max_tokens = GPT4_MAX_TOKENS_PER_CHUNK  
+    else:
+        max_tokens = GPT3_MAX_TOKENS_PER_CHUNK
+     
+    
     """Translate the source_text from source_lang to target_lang."""
 
     num_tokens_in_text = num_tokens_in_string(source_text)
@@ -897,7 +875,7 @@ def translate(
         ic("Translating text as single chunk")
 
         final_translation = one_chunk_translate_text(
-            source_lang, target_lang, source_text, country
+            source_lang, target_lang, source_text, llm_model, country
         )
 
         return final_translation
@@ -922,7 +900,7 @@ def translate(
         ic(len(source_text_chunks))
 
         translation_2_chunks = multichunk_translation(
-            source_lang, target_lang, source_text_chunks, country
+            source_lang, target_lang, source_text_chunks, llm_model, country
         )
 
         return "".join(translation_2_chunks)
