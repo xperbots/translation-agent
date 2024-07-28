@@ -62,9 +62,11 @@
             <textarea id="originalText"></textarea>
             <h3>选择模型</h3>
             <select id="modelSelect">
-                <option value="claude-3-5">Claude</option>
-                <option value="gpt-3-instruct">GPT3</option>
-                <option value="gpt-4-turbo">GPT4</option>
+                <option value="claude-3-5">Claude带校准</option>
+                <option value="gpt-instruct-claude">GPT3带校准</option>
+                <option value="gpt-4-turbo">GPT4带校准</option>
+                <option value="gpt-instruct-fast">GPT3快速无校准</option>
+                <option value="claude-3-5-fast">Claude快速无校准</option>
             </select>
             <button onclick="translateText()">一键翻译</button>
         </div>

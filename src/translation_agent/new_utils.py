@@ -35,6 +35,13 @@ MAX_TOKENS_OVERALL = (
 )
 # discrete number of tokens to translate at a time
 
+'''
+待优化部分：
+1 - Claude 的API重试机制
+2 - 分块模型可以考虑换成更便宜的gpt-4o-mini， 客服机器人也可以考虑换gpt-4o-mini
+3 - 初始翻译是不考虑国家，对于巴西和中东国家，Fast这样的一遍过的模式考虑在修改Prompt加入国家
+
+'''
 
 #default model for all kind of tasks in GPT completion
 GPT_DEFAULT_MODEL = "gpt-4-turbo"
@@ -74,9 +81,10 @@ def claude_completion(user_prompt,system_prompt,model=CLAUDE_DEFAULT_MODEL, max_
     return claude_response
 
 
-
 #尝试使用gpt-3.5-turbo-instruct模型来翻译,完成第一次翻译
 def gpt_get_completion_instruct_model(prompt, model="gpt-3.5-turbo-instruct", max_tokens=2000, temperature=0):
+    
+    ic(model)
     
     for i in range(3):  # 最多重试三次
         try:
@@ -188,8 +196,8 @@ Do not provide any explanations or text apart from the translation.
     
     ic(llm_model)
     
-    #gpt-3-instruct的Prompt内容不同，只有一个Prompt
-    if llm_model == "gpt-3-instruct":
+    #gpt-instruct的Prompt内容不同，只有一个Prompt
+    if llm_model == "gpt-instruct-claude" or llm_model == "gpt-instruct-fast":
         
         prompt = f"""You are a professional translation engine. Please translate the text delimited by triple backticks into {target_lang} without explanation.
         Original content:```你好```
@@ -200,9 +208,9 @@ Do not provide any explanations or text apart from the translation.
 
     #根据llm的类型决定,第一次翻译采用什么模型
     
-    if llm_model == "claude-3-5":
+    if llm_model == "claude-3-5" or llm_model == "claude-3-5-fast":
         translation = claude_completion(prompt, system_message)
-    elif llm_model == "gpt-3-instruct":
+    elif llm_model == "gpt-instruct-claude" or llm_model == "gpt-instruct-fast":
         translation = gpt_get_completion_instruct_model(prompt) 
     elif llm_model == "gpt-4-turbo":
         translation = gpt_get_completion(prompt, system_message) 
@@ -295,7 +303,7 @@ Output only the suggestions and nothing else."""
     #根据llm的类型决定,第一次翻译采用什么模型
     if llm_model == "claude-3-5":
         reflection = claude_completion(prompt, system_message)
-    elif llm_model == "gpt-3-instruct" or llm_model == "gpt-4-turbo":
+    elif llm_model == "gpt-instruct-claude" or llm_model == "gpt-4-turbo":
         reflection = gpt_get_completion(prompt, system_message) 
     else:
         reflection = gpt_get_completion(prompt, system_message)
@@ -359,7 +367,7 @@ Output only the new translation and nothing else."""
     #根据llm的类型决定,第一次翻译采用什么模型
     if llm_model == "claude-3-5":
         translation_2 = claude_completion(prompt, system_message)
-    elif llm_model == "gpt-3-instruct" or llm_model == "gpt-4-turbo":
+    elif llm_model == "gpt-instruct-claude" or llm_model == "gpt-4-turbo":
         translation_2 = gpt_get_completion(prompt, system_message) 
     else:
         translation_2 = gpt_get_completion(prompt, system_message)
@@ -490,9 +498,10 @@ Output only the translation of the portion you are asked to translate, and nothi
             tagged_text=tagged_text,
             chunk_to_translate=source_text_chunks[i],
         )
+                
+        #gpt-instruct的Prompt内容不同，只有一个Prompt, 采用的是Complete的逻辑
         
-        #gpt-3-instruct的Prompt内容不同，只有一个Prompt
-        if llm_model == "gpt-3-instruct":
+        if llm_model == "gpt-instruct-claude" or llm_model == "gpt-instruct-fast":
             
             prompt = f"""You are a professional translation engine. Please translate the text delimited by triple backticks into {target_lang} without explanation.
             Original content:```你好```
@@ -500,9 +509,9 @@ Output only the translation of the portion you are asked to translate, and nothi
             Original content:```{source_text_chunks[i]}```
             Translated content:"""
         
-        if llm_model == "claude-3-5":
+        if llm_model == "claude-3-5" or llm_model == "claude-3-5-fast":
             translation = claude_completion(prompt, system_message)
-        elif llm_model == "gpt-3-instruct":
+        elif llm_model == "gpt-instruct-claude" or llm_model == "gpt-instruct-fast":
             translation = gpt_get_completion_instruct_model(prompt) 
         elif llm_model == "gpt-4-turbo":
             translation = gpt_get_completion(prompt, system_message) 
@@ -635,7 +644,7 @@ Output only the suggestions and nothing else."""
         #根据llm的类型决定,第一次翻译采用什么模型
         if llm_model == "claude-3-5":
             reflection = claude_completion(prompt, system_message)
-        elif llm_model == "gpt-3-instruct" or llm_model == "gpt-4-turbo":
+        elif llm_model == "gpt-instruct-claude" or llm_model == "gpt-4-turbo":
             reflection = gpt_get_completion(prompt, system_message) 
         else:
             reflection = gpt_get_completion(prompt, system_message)
@@ -731,7 +740,7 @@ Output only the new translation of the indicated part and nothing else."""
         #根据llm的类型决定,第一次翻译采用什么模型
         if llm_model == "claude-3-5":
             translation_2 = claude_completion(prompt, system_message)
-        elif llm_model == "gpt-3-instruct" or llm_model == "gpt-4-turbo":
+        elif llm_model == "gpt-instruct-claude" or llm_model == "gpt-4-turbo":
             translation_2 = gpt_get_completion(prompt, system_message) 
         else:
             translation_2 = gpt_get_completion(prompt, system_message)
@@ -843,6 +852,20 @@ def calculate_chunk_size(token_count: int, token_limit: int) -> int:
 
     return chunk_size
 
+'''
+AI模型设计说明
+从成本考虑设置将翻译模型设计为无校对的一次翻译和有校对3次翻译
+无校对为3.5-Intruct一次翻译和Claude-3.5-sonnet 一次翻译，为了翻译大文本，一次翻译采用直接分块翻译
+有校对3次翻译，也分单块翻译多块翻译
+模型参数定义如下
+
+1.gpt-instruct-fast: gpt-3.5-Intruct 一次翻译
+2.claude-3-5-fast: Claude-3.5-sonnet 一次翻译
+3.gpt-instruct-claude: gpt-3.5-Intruct第一次翻 + claude-3.5-sonnet两遍校准
+4.claude-3-5: claude-3.5-sonnet第一次翻 + claude-3.5-sonnet两遍校准
+5.gpt-4-turbo: 质量最高且最贵 gpt-4-turbo第一次翻+gpt-4-turbo两遍校准
+'''
+
 def translate(
     source_lang,
     target_lang,
@@ -853,16 +876,16 @@ def translate(
     
     ic(llm_model)
     
-    #根据llm的类型决定,分块的翻译的块大小,因为每个LLM可以单次输入大小不同，Instruct输入和输出一共4096
+    #根据llm的类型决定,分块的翻译的块大小,因为每个LLM可以单次输入大小不同，Instruct输入和输出一共4096,所以单块只有1600
     
-    if llm_model == "claude-3-5":
+    if llm_model == "claude-3-5" or llm_model == "claude-3-5-fast":
         max_tokens = CLAUDE_MAX_TOKENS_PER_CHUNK
-    elif llm_model == "gpt-3-instruct":
+    elif llm_model == "gpt-instruct-claude" or llm_model == "gpt-instruct-fast":
         max_tokens = GPT3_MAX_TOKENS_PER_CHUNK  
     elif llm_model == "gpt-4-turbo":
         max_tokens = GPT4_MAX_TOKENS_PER_CHUNK  
     else:
-        max_tokens = GPT3_MAX_TOKENS_PER_CHUNK
+        max_tokens = GPT3_MAX_TOKENS_PER_CHUNK #默认采用最保守的GPT3的最小块输入
      
     
     """Translate the source_text from source_lang to target_lang."""
@@ -871,12 +894,20 @@ def translate(
 
     ic(num_tokens_in_text)
 
+    #单块翻译
     if num_tokens_in_text < max_tokens:
         ic("Translating text as single chunk")
 
-        final_translation = one_chunk_translate_text(
-            source_lang, target_lang, source_text, llm_model, country
-        )
+        #无校准快速翻译,只调用initial_translation 没有后续校准步骤，所以也不考虑国家影响
+        if llm_model == "gpt-instruct-fast" or llm_model == "claude-3-5-fast":
+            
+            final_translation = one_chunk_initial_translation(source_lang, target_lang, source_text, llm_model)
+        
+        else:
+        #带校准的翻译
+            final_translation = one_chunk_translate_text(
+                source_lang, target_lang, source_text, llm_model, country
+            )
 
         return final_translation
 
@@ -899,9 +930,17 @@ def translate(
         
         ic(len(source_text_chunks))
 
-        translation_2_chunks = multichunk_translation(
-            source_lang, target_lang, source_text_chunks, llm_model, country
-        )
+        #无校准快速翻译,只调用initial_translation 没有后续校准步骤，所以也不考虑国家影响
+        if llm_model == "gpt-instruct-fast" or llm_model == "claude-3-5-fast":
+            
+            translation_2_chunks = multichunk_initial_translation (source_lang, target_lang, source_text_chunks, llm_model)
+        
+        else:
+        #带校准的翻译
+
+            translation_2_chunks = multichunk_translation(
+                source_lang, target_lang, source_text_chunks, llm_model, country
+            )
 
         return "".join(translation_2_chunks)
 
