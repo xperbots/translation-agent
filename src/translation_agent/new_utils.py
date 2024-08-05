@@ -18,13 +18,18 @@ load_dotenv()  # read local .env file
 gptclient = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 claudclient = anthropic.Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
 
-#定义块的大小，让AI分块翻译
+#定义块的大小，让AI分块翻译, 根据不同模型的最大输出Token量不同，定义不同的块大小
 GPT3_MAX_TOKENS_PER_CHUNK = (
     1600  # if text is more than this many tokens, we'll break it up into
 )
 GPT4_MAX_TOKENS_PER_CHUNK = (
     4000  # if text is more than this many tokens, we'll break it up into
 )
+
+GPT4oMini_MAX_TOKENS_PER_CHUNK = (
+    15000  # if text is more than this many tokens, we'll break it up into
+)
+
 CLAUDE_MAX_TOKENS_PER_CHUNK = (
     4000  # if text is more than this many tokens, we'll break it up into
 )
@@ -38,8 +43,9 @@ MAX_TOKENS_OVERALL = (
 '''
 待优化部分：
 1 - Claude 的API重试机制
-2 - 分块模型可以考虑换成更便宜的gpt-4o-mini， 客服机器人也可以考虑换gpt-4o-mini
+2 - 当前的Few shots 默认使用越南语言。需要加入动态语种的Few Shots, 尤其是英文的部分
 3 - 初始翻译是不考虑国家，对于巴西和中东国家，Fast这样的一遍过的模式考虑在修改Prompt加入国家
+
 
 '''
 
@@ -49,7 +55,7 @@ GPT_DEFAULT_MODEL = "gpt-4-turbo"
 CLAUDE_DEFAULT_MODEL="claude-3-5-sonnet-20240620"
 #CLAUDE_DEFAULT_MODEL= "claude-3-opus-20240229"
 
-#model for splitting text into chunks
+#model for splitting text into chunks，尝试了使用 4o mini分块, 出错了，还是使用3.5 turbo
 SPLIT_MODEL = "gpt-3.5-turbo"
 
 #First translation model
@@ -183,13 +189,25 @@ def one_chunk_initial_translation(
     Returns:
         str: The translated text.
     """
+    #定义中文你好，不同语言的翻译内容来做 One shot 举例
+    if {target_lang} == "Vietnamese":
+        one_shot_example = "Xin chào"
+    elif {target_lang} == "Thai":
+        one_shot_example = "สวัสดี"
+    elif {target_lang} == "English":
+        one_shot_example = "Hello"
+    else:
+        one_shot_example = "Xin chào"
 
     system_message = f"You are an expert linguist, specializing in translation from {source_lang} to {target_lang}."
 
-    translation_prompt = f"""This is an {source_lang} to {target_lang} translation, please provide the {target_lang} translation for this text. \
+    translation_prompt = f"""This is an {source_lang} to {target_lang} translation, please provide the {target_lang} translation for this text delimited by triple backticks. \
 Do not provide any explanations or text apart from the translation.
-{source_lang}: {source_text}
 
+{source_lang}:```你好```
+{target_lang}:{one_shot_example}
+
+{source_lang}:```{source_text}```
 {target_lang}:"""
 
     prompt = translation_prompt.format(source_text=source_text)
@@ -200,10 +218,10 @@ Do not provide any explanations or text apart from the translation.
     if llm_model == "gpt-instruct-claude" or llm_model == "gpt-instruct-fast":
         
         prompt = f"""You are a professional translation engine. Please translate the text delimited by triple backticks into {target_lang} without explanation.
-        Original content:```你好```
-        Translated content:Xin chào
-        Original content:```{source_text}```
-        Translated content:"""
+        {source_lang}:```你好```
+        {target_lang}:{one_shot_example}
+        {source_lang}:```{source_text}```
+        {target_lang}:"""
     
 
     #根据llm的类型决定,第一次翻译采用什么模型
@@ -212,12 +230,13 @@ Do not provide any explanations or text apart from the translation.
         translation = claude_completion(prompt, system_message)
     elif llm_model == "gpt-instruct-claude" or llm_model == "gpt-instruct-fast":
         translation = gpt_get_completion_instruct_model(prompt) 
+    elif llm_model == "gpt-4o-mini" or llm_model == "gpt-4o-mini-fast":
+        translation = gpt_get_completion(prompt, system_message,model="gpt-4o-mini")
     elif llm_model == "gpt-4-turbo":
-        translation = gpt_get_completion(prompt, system_message) 
+        translation = gpt_get_completion(prompt, system_message,model="gpt-4-turbo") 
     else:
         translation = gpt_get_completion(prompt, system_message)
     
-      
     return translation
 
 
@@ -300,11 +319,14 @@ Output only the suggestions and nothing else."""
         translation_1=translation_1,
     )
     
-    #根据llm的类型决定,第一次翻译采用什么模型
-    if llm_model == "claude-3-5":
+    #根据llm的类型决定,第一次翻译采用什么模型, Fast类型不会出现在校对函数中。
+    
+    if llm_model == "claude-3-5" or llm_model == "gpt-instruct-claude":
         reflection = claude_completion(prompt, system_message)
-    elif llm_model == "gpt-instruct-claude" or llm_model == "gpt-4-turbo":
-        reflection = gpt_get_completion(prompt, system_message) 
+    elif llm_model == "gpt-4-turbo":
+        reflection = gpt_get_completion(prompt, system_message,model="gpt-4-turbo") 
+    elif llm_model == "gpt-4o-mini":
+        reflection = gpt_get_completion(prompt, system_message,model="gpt-4o-mini") 
     else:
         reflection = gpt_get_completion(prompt, system_message)
     
@@ -365,11 +387,15 @@ Output only the new translation and nothing else."""
 
     
     #根据llm的类型决定,第一次翻译采用什么模型
-    if llm_model == "claude-3-5":
+    
+    if llm_model == "claude-3-5" or llm_model == "gpt-instruct-claude":
         translation_2 = claude_completion(prompt, system_message)
-    elif llm_model == "gpt-instruct-claude" or llm_model == "gpt-4-turbo":
-        translation_2 = gpt_get_completion(prompt, system_message) 
+    elif llm_model == "gpt-4-turbo":
+        translation_2 = gpt_get_completion(prompt, system_message, model="gpt-4-turbo") 
+    elif llm_model == "gpt-4o-mini":
+        translation_2 = gpt_get_completion(prompt, system_message, model="gpt-4o-mini")    
     else:
+        #兜底为全局变量定义的模型，通常为最强的gpt-4-turbo
         translation_2 = gpt_get_completion(prompt, system_message)
     
     return translation_2
@@ -501,11 +527,22 @@ Output only the translation of the portion you are asked to translate, and nothi
                 
         #gpt-instruct的Prompt内容不同，只有一个Prompt, 采用的是Complete的逻辑
         
+        #定义中文你好，不同语言的翻译内容来做 One shot 举例
+        if {target_lang} == "Vietnamese":
+            one_shot_example = "Xin chào"
+        elif {target_lang} == "Thai":
+            one_shot_example = "สวัสดี"
+        elif {target_lang} == "English":
+            one_shot_example = "Hello"
+        else:
+            one_shot_example = "Xin chào"
+        
+        
         if llm_model == "gpt-instruct-claude" or llm_model == "gpt-instruct-fast":
             
             prompt = f"""You are a professional translation engine. Please translate the text delimited by triple backticks into {target_lang} without explanation.
             Original content:```你好```
-            Translated content:Xin chào
+            Translated content:{one_shot_example}
             Original content:```{source_text_chunks[i]}```
             Translated content:"""
         
@@ -513,9 +550,12 @@ Output only the translation of the portion you are asked to translate, and nothi
             translation = claude_completion(prompt, system_message)
         elif llm_model == "gpt-instruct-claude" or llm_model == "gpt-instruct-fast":
             translation = gpt_get_completion_instruct_model(prompt) 
+        elif llm_model == "gpt-4-mini" or llm_model == "gpt-4-mini-fast":
+            translation = gpt_get_completion(prompt, system_message, model= "gpt-4-mini") 
         elif llm_model == "gpt-4-turbo":
-            translation = gpt_get_completion(prompt, system_message) 
+            translation = gpt_get_completion(prompt, system_message,model= "gpt-4-turbo") 
         else:
+            #兜底使用全局变量的Default 模型，当前为GPT-4-turbo
             translation = gpt_get_completion(prompt, system_message)
 
         #translation = get_completion(prompt, system_message=system_message)
@@ -642,10 +682,12 @@ Output only the suggestions and nothing else."""
             )
 
         #根据llm的类型决定,第一次翻译采用什么模型
-        if llm_model == "claude-3-5":
+        if llm_model == "claude-3-5" or llm_model == "gpt-instruct-claude":
             reflection = claude_completion(prompt, system_message)
-        elif llm_model == "gpt-instruct-claude" or llm_model == "gpt-4-turbo":
-            reflection = gpt_get_completion(prompt, system_message) 
+        elif llm_model == "gpt-4o-mini":
+            reflection = gpt_get_completion(prompt, system_message,model="gpt-4o-mini")         
+        elif llm_model == "gpt-4-turbo":
+            reflection = gpt_get_completion(prompt, system_message,model="gpt-4-turbo") 
         else:
             reflection = gpt_get_completion(prompt, system_message)
         
@@ -737,14 +779,15 @@ Output only the new translation of the indicated part and nothing else."""
             reflection_chunk=reflection_chunks[i],
         )
 
-        #根据llm的类型决定,第一次翻译采用什么模型
-        if llm_model == "claude-3-5":
+        #根据llm的类型决定,第二次翻译采用什么模型
+        if llm_model == "claude-3-5" or llm_model == "gpt-instruct-claude":
             translation_2 = claude_completion(prompt, system_message)
-        elif llm_model == "gpt-instruct-claude" or llm_model == "gpt-4-turbo":
-            translation_2 = gpt_get_completion(prompt, system_message) 
+        elif llm_model == "gpt-4o-mini":
+            translation_2 = gpt_get_completion(prompt, system_message,model="gpt-4o-mini") 
+        elif llm_model == "gpt-4-turbo":
+            translation_2 = gpt_get_completion(prompt, system_message,model="gpt-4-turbo") 
         else:
             translation_2 = gpt_get_completion(prompt, system_message)
-        
         
         #translation_2 = get_completion(prompt,system_message=system_message)
         
@@ -864,6 +907,8 @@ AI模型设计说明
 3.gpt-instruct-claude: gpt-3.5-Intruct第一次翻 + claude-3.5-sonnet两遍校准
 4.claude-3-5: claude-3.5-sonnet第一次翻 + claude-3.5-sonnet两遍校准
 5.gpt-4-turbo: 质量最高且最贵 gpt-4-turbo第一次翻+gpt-4-turbo两遍校准
+6.gpt-4o-mini-fast: 最快最便宜,一次吞吐为15000 Token 为其他的3倍，一次翻译无校对，但不一定稳定
+7.gpt-4o-mini: 采用最快最便宜的gpt-4o-mini，同时用gpt-4o-mini进行两次校准
 '''
 
 def translate(
@@ -880,6 +925,8 @@ def translate(
     
     if llm_model == "claude-3-5" or llm_model == "claude-3-5-fast":
         max_tokens = CLAUDE_MAX_TOKENS_PER_CHUNK
+    elif llm_model == "gpt-4o-mini" or llm_model == "gpt-4o-mini-fast":
+        max_tokens = GPT4oMini_MAX_TOKENS_PER_CHUNK
     elif llm_model == "gpt-instruct-claude" or llm_model == "gpt-instruct-fast":
         max_tokens = GPT3_MAX_TOKENS_PER_CHUNK  
     elif llm_model == "gpt-4-turbo":
@@ -899,7 +946,7 @@ def translate(
         ic("Translating text as single chunk")
 
         #无校准快速翻译,只调用initial_translation 没有后续校准步骤，所以也不考虑国家影响
-        if llm_model == "gpt-instruct-fast" or llm_model == "claude-3-5-fast":
+        if llm_model == "gpt-instruct-fast" or llm_model == "claude-3-5-fast" or llm_model == "gpt-4o-mini-fast":
             
             final_translation = one_chunk_initial_translation(source_lang, target_lang, source_text, llm_model)
         
@@ -931,7 +978,7 @@ def translate(
         ic(len(source_text_chunks))
 
         #无校准快速翻译,只调用initial_translation 没有后续校准步骤，所以也不考虑国家影响
-        if llm_model == "gpt-instruct-fast" or llm_model == "claude-3-5-fast":
+        if llm_model == "gpt-instruct-fast" or llm_model == "claude-3-5-fast" or llm_model == "gpt-4o-mini-fast":
             
             translation_2_chunks = multichunk_initial_translation (source_lang, target_lang, source_text_chunks, llm_model)
         
