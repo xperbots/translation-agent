@@ -74,7 +74,7 @@ if __name__ == "__main__":
 
 
     ''' 
-    #llama 3.1 70B
+    #llama 3.1 70B 调用代码
 
     # 准备输入数据
     prompt = f"Human: {translation_prompt}。\n\nAssistant: "

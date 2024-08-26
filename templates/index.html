@@ -62,8 +62,18 @@
             <textarea id="originalText"></textarea>
             <h3>选择模型</h3>
             <select id="modelSelect">
-                <option value="gpt-4o">GPT4o无校准</option>
-                <option value="claude-3-5-fast">Claude快速无校准</option>
+                <option value="aws-claude-3-H">AWS-Claude3-H可用</option>
+                <option value="aws-claude-3-5">AWS-Claude35</option>
+                <option value="claude-3-5">原版-Claude35</option>
+                <option value="claude-3-H">原版-Claude3-H可用</option>
+                <option value="gpt-4o-H">原版-GPT4o-H可用</option>
+                <option value="gpt-4o-mini">原版-GPT4迷你</option>
+                <option value="gpt-4-turbo">原版-GPT4涡轮增压</option>
+            </select>
+            <h3>一次性翻译</h3>
+            <select id="oneTimeTranslation">
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
             </select>
             <button onclick="translateText()">一键翻译</button>
         </div>
@@ -72,6 +82,7 @@
             <select id="targetLanguage">
                 <option value="Vietnamese">Vietnamese</option>
                 <option value="Thai">Thai</option>
+                <option value="Spanish">Spanish</option>
                 <option value="English">English</option>
             </select>
             <h3>翻译结果目标国家</h3>
@@ -82,7 +93,7 @@
             </select>
             <h3>翻译结果</h3>
             <textarea id="translatedText"></textarea>
-            <button onclick="copyText()">复制译文</button>
+            <button onclick="copyAndClearText()">复制译文并清理</button>
         </div>
     </div>
 
@@ -92,6 +103,7 @@
             const targetLanguage = document.getElementById('targetLanguage').value;
             const targetCountry = document.getElementById('targetCountry').value;
             const selectedModel = document.getElementById('modelSelect').value;
+            const oneTimeTranslation = document.getElementById('oneTimeTranslation').value;
 
             const response = await fetch('/translate', {
                 method: 'POST',
@@ -102,7 +114,8 @@
                     original_text: originalText,
                     target_language: targetLanguage,
                     target_country: targetCountry,
-                    model: selectedModel
+                    model: selectedModel,
+                    one_time_translate: oneTimeTranslation
                 })
             });
 
@@ -110,10 +123,14 @@
             document.getElementById('translatedText').value = result.translated_text;
         }
 
-        function copyText() {
+        function copyAndClearText() {
             const translatedText = document.getElementById('translatedText');
             translatedText.select();
             document.execCommand('copy');
+            
+            // Clear both input boxes
+            document.getElementById('originalText').value = '';
+            document.getElementById('translatedText').value = '';
         }
     </script>
 </body>

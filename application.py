@@ -17,10 +17,11 @@ def translate_text():
     target_lang = data['target_language']
     country = data['target_country']
     llm_model= data['model']
+    one_time_translate = data['one_time_translate']
     
     #ic(target_lang)
     #ic(country)
-    #ic(llm_model)
+    ic(one_time_translate)
     
 
     # Perform the translation using some translation library or API
@@ -29,7 +30,8 @@ def translate_text():
         target_lang=target_lang,
         source_text=source_text,
         country=country,
-        llm_model=llm_model
+        llm_model=llm_model,
+        one_time_translate=one_time_translate
     )
 
     #完成一篇文章日志显示翻译完成   
